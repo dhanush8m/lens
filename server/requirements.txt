@@ -1,0 +1,16 @@
+fastapi
+uvicorn[standard]
+opencv-python-headless
+pillow
+pytesseract
+langdetect
+transformers      # optional for offline open-source translation
+sentencepiece     # sometimes needed for HF models
+torch             # needed if using HF Marian on CPU (can be heavy)
+python-multipart
+fastapi
+uvicorn
+python-multipart
+python-dotenv
+Pillow
+google-generativeai
