@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from PIL import Image
 import google.generativeai as genai
+from fastapi.middleware.cors import CORSMiddleware
 
 load_dotenv()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
@@ -19,10 +20,10 @@ app = FastAPI(title="Lens Translator")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],          # Allows your frontend (any URL)
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    allow_credentials=True,
 )
 
 ALLOWED_MIME = {"image/jpeg", "image/png", "image/webp", "image/bmp"}
