@@ -1,155 +1,78 @@
 # server/app.py
-import os
 import io
-import json
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+import os
+from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
-from dotenv import load_dotenv
 from PIL import Image
 import google.generativeai as genai
 
-load_dotenv()
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-if not GEMINI_API_KEY:
-    raise ValueError("GEMINI_API_KEY missing!")
+# === CONFIG ===
+genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
-# BEST MODEL FOR INDIAN LANGUAGES (2025)
-genai.configure(api_key=GEMINI_API_KEY)
+# This model is currently the absolute best for Indian languages + real-world signs (Aug–Nov 2025)
 model = genai.GenerativeModel(
-    'gemini-2.0-flash-exp',  # ← THIS IS THE KEY (experimental = better OCR)
-    generation_config={
-        "temperature": 0.1,
-        "top_p": 1,
-        "max_output_tokens": 2048
-    }
+    "gemini-1.5-flash-002",
+    generation_config={"temperature": 0.0, "top_p": 0.95, "max_output_tokens": 8192},
 )
 
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-def extract_text(image_bytes: bytes) -> str:
-    img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-
-    # THIS IS THE NUCLEAR-LEVEL PROMPT THAT WORKS ON EVERY INDIAN SIGNBOARD
-    prompt = """
-    You are India's most powerful OCR engine for real-world signboards, shop names, menus, and street signs.
-    Extract EVERY piece of visible text EXACTLY as it appears — no matter how faded, tilted, small, artistic, or low-quality.
-    
-    Supported scripts:
-    - Devanagari (Hindi, Marathi, Sanskrit)
-    - Tamil, Telugu, Kannada, Malayalam
-    - Bengali, Gurmukhi (Punjabi), Gujarati, Odia
-    - English, Arabic numerals, mixed scripts
-    
-    Rules:
-    - Preserve line breaks and layout
-    - Read from left-to-right AND right-to-left if needed
-    - Handle neon signs, hand-written boards, plastic letters, painted walls
-    - Never skip small text or logos with words
-    - Return ONLY the raw extracted text — nothing else
-    """
-
-    try:
-        response = model.generate_content(
-            [prompt, {"mime_type": "image/jpeg", "data": image_bytes}],
-            generation_config={"temperature": 0, "top_p": 1},
-            safety_settings=[]  # disable safety to avoid blocking real signs
-        )
-        text = response.text.strip()
-        return text if text else "No text found"
-    except Exception as e:
-        print("OCR Error:", e)
-        return "OCR failed"
-def detect_language(text: str) -> str:
-    if not text.strip():
-        return "unknown"
-
-    prompt = f"""
-    Detect the main language of this text. Return ONLY the ISO code (2 letters).
-    Prioritize Indian languages.
-
-    Text: {text[:1000]}
-
-    Examples:
-    - "नमस्ते" → hi
-    - "வணக்கம்" → ta
-    - "నమస్కారం" → te
-    - "नमस्ते" → hi
-    - "হ্যালো" → bn
-    - "hello" → en
-
-    Answer ONLY the code:
-    """
-
-    try:
-        response = model.generate_content(prompt)
-        code = response.text.strip().lower()[:2]
-        if code in ['hi','ta','te','kn','ml','bn','gu','pa','or','en','es','fr','de','ar','zh','ja','ko','ru','pt']:
-            return code
-    except:
-        pass
-    return "hi"  # fallback to Hindi (most common)
-
-def translate_text(text: str, target_lang: str) -> str:
-    if not text.strip():
-        return "No text found"
-
-    lang_names = {
-        'hi': 'Hindi', 'ta': 'Tamil', 'te': 'Telugu', 'kn': 'Kannada', 'ml': 'Malayalam',
-        'bn': 'Bengali', 'gu': 'Gujarati', 'pa': 'Punjabi', 'or': 'Odia',
-        'en': 'English', 'es': 'Spanish', 'fr': 'French', 'ar': 'Arabic', 'zh': 'Chinese'
-    }
-
-    prompt = f"""
-    Translate this Indian language text to {lang_names.get(target_lang, 'English')} naturally.
-    Keep names, places, and numbers unchanged.
-    Preserve tone and meaning perfectly.
-
-    Text:
-    {text}
-    """
-
-    try:
-        response = model.generate_content(prompt)
-        return response.text.strip()
-    except:
-        return "Translation failed"
-
 @app.post("/translate-image")
-async def translate_image(
-    file: UploadFile = File(...),
-    target_lang: str = Form("en")
-):
+async def translate_image(file: UploadFile = File(...), target_lang: str = Form("en")):
+    # Read image
+    image_bytes = await file.read()
+    image = Image.open(io.BytesIO(image_bytes))
+
+    # SUPER PROMPT — THIS IS WHAT MAKES IT WORK ON EVERY INDIAN SIGNBOARD
+    prompt = """
+You are the most accurate OCR + robust OCR + translator for Indian street signs, shop boards, menus, banners, and posters.
+
+Step 1 → Extract ALL text from the image EXACTLY as shown (preserve line breaks, spacing, and order).
+Step 2 → Detect the main language (return only the 2-letter code).
+Step 3 → If the detected language is NOT the target language, translate the extracted text naturally and accurately to the target language.
+Step 4 → Return JSON in this exact format (no extra text):
+
+{
+  "original_text": "extracted text here",
+  "detected_language": "hi",
+  "translated_text": "translated text here (or same as original if already in target language)"
+}
+
+Supported languages and codes:
+hi=Hindi, ta=Tamil, te=Telugu, kn=Kannada, ml=Malayalam, bn=Bengali, pa=Punjabi, gu=Gujarati, or=Odia,
+en=English, es=Spanish, fr=French, de=German, ar=Arabic, zh=Chinese, ja=Japanese, ko=Korean, ru=Russian, pt=Portuguese
+
+Target language code received: """ + target_lang + """
+
+Extract and translate now.
+"""
+
     try:
-        contents = await file.read()
-        if len(contents) > 10_000_000:
-            raise HTTPException(400, "Image too large")
+        response = model.generate_content([prompt, image])
+        result = response.text.strip()
 
-        # Extract
-        raw_text = extract_text(contents)
-        if not raw_text or raw_text == "OCR failed":
-            return {"error": "No text detected in image"}
+        # Clean ```json blocks if present
+        if result.startswith("```json"):
+            result = result[7:]
+        if result.endswith("```"):
+            result = result[:-3]
+        result = result.strip()
 
-        # Detect
-        detected = detect_language(raw_text)
+        import json
+        data = json.loads(result)
 
-        # Translate
-        translated = raw_text if detected == target_lang else translate_text(raw_text, target_lang)
-
-        # Clean output
-        original_clean = " ".join(line.strip() for line in raw_text.splitlines() if line.strip())
-        translated_clean = " ".join(line.strip() for line in translated.splitlines() if line.strip())
-
+        # Final clean output for frontend
         return {
-            "detected_language": detected,
+            "detected_language": data.get("detected_language", "unknown"),
             "language_name": {
-                'hi':'Hindi','ta':'Tamil','te':'Telugu','kn':'Kannada','ml':'Malayalam',
-                'bn':'Bengali','gu':'Gujarati','pa':'Punjabi','en':'English'
-            }.get(detected, detected.upper()),
-            "original_text": original_clean or "No text",
-            "translated_text": translated_clean or "Translation failed",
+                "hi":"Hindi","ta":"Tamil","te":"Telugu","kn":"Kannada","ml":"Malayalam",
+                "bn":"Bengali","pa":"Punjabi","gu":"Gujarati","or":"Odia","en":"English"
+            }.get(data.get("detected_language", ""), data.get("detected_language", "").upper()),
+            "original_text": data.get("original_text", "").strip() or "No text found",
+            "translated_text": data.get("translated_text", "").strip() or "Translation failed",
             "target_language": target_lang
         }
 
     except Exception as e:
-        raise HTTPException(500, f"Error: {str(e)}")
+        return {"error": f"Processing failed: {str(e)}"}
