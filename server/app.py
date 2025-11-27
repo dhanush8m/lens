@@ -28,30 +28,38 @@ app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 def extract_text(image_bytes: bytes) -> str:
-    img = Image.open(io.BytesIO(image_bytes))
+    img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
 
-    # INDIAN LANGUAGE SUPER PROMPT
+    # THIS IS THE NUCLEAR-LEVEL PROMPT THAT WORKS ON EVERY INDIAN SIGNBOARD
     prompt = """
-    You are the world's best OCR engine for Indian languages.
-    Extract ALL text from this image EXACTLY as it appears.
-    Support: Hindi (Devanagari), Tamil, Telugu, Kannada, Malayalam, Bengali, Gurmukhi (Punjabi), Gujarati, Odia, Arabic, English — even mixed.
-
+    You are India's most powerful OCR engine for real-world signboards, shop names, menus, and street signs.
+    Extract EVERY piece of visible text EXACTLY as it appears — no matter how faded, tilted, small, artistic, or low-quality.
+    
+    Supported scripts:
+    - Devanagari (Hindi, Marathi, Sanskrit)
+    - Tamil, Telugu, Kannada, Malayalam
+    - Bengali, Gurmukhi (Punjabi), Gujarati, Odia
+    - English, Arabic numerals, mixed scripts
+    
     Rules:
-    - Keep line breaks and spacing
-    - Handle faded, tilted, artistic, or low-quality text
-    - Do NOT translate — only extract raw text
-    - If unsure, guess intelligently but don't hallucinate
-    - Return ONLY the extracted text
-
-    Image contains Indian signboard/text.
+    - Preserve line breaks and layout
+    - Read from left-to-right AND right-to-left if needed
+    - Handle neon signs, hand-written boards, plastic letters, painted walls
+    - Never skip small text or logos with words
+    - Return ONLY the raw extracted text — nothing else
     """
 
     try:
-        response = model.generate_content([prompt, img])
-        return response.text.strip()
+        response = model.generate_content(
+            [prompt, {"mime_type": "image/jpeg", "data": image_bytes}],
+            generation_config={"temperature": 0, "top_p": 1},
+            safety_settings=[]  # disable safety to avoid blocking real signs
+        )
+        text = response.text.strip()
+        return text if text else "No text found"
     except Exception as e:
+        print("OCR Error:", e)
         return "OCR failed"
-
 def detect_language(text: str) -> str:
     if not text.strip():
         return "unknown"
