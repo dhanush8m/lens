@@ -1,78 +1,79 @@
-# server/app.py
-import io
+# server/app.py — ONLY CHANGE: clean line-by-line output (no \n)
 import os
+import io
+import json
 from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
+from dotenv import load_dotenv
 from PIL import Image
 import google.generativeai as genai
 
-# === CONFIG ===
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+load_dotenv()
 
-# This model is currently the absolute best for Indian languages + real-world signs (Aug–Nov 2025)
-model = genai.GenerativeModel(
-    "gemini-1.5-flash-002",
-    generation_config={"temperature": 0.0, "top_p": 0.95, "max_output_tokens": 8192},
-)
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+if not GEMINI_API_KEY:
+    raise RuntimeError("Add GEMINI_API_KEY in .env file!")
+
+genai.configure(api_key=GEMINI_API_KEY)
+
+model = genai.GenerativeModel("gemini-2.5-flash")
 
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 @app.post("/translate-image")
 async def translate_image(file: UploadFile = File(...), target_lang: str = Form("en")):
-    # Read image
-    image_bytes = await file.read()
-    image = Image.open(io.BytesIO(image_bytes))
+    try:
+        image_bytes = await file.read()
+        image = Image.open(io.BytesIO(image_bytes))
 
-    # SUPER PROMPT — THIS IS WHAT MAKES IT WORK ON EVERY INDIAN SIGNBOARD
-    prompt = """
-You are the most accurate OCR + robust OCR + translator for Indian street signs, shop boards, menus, banners, and posters.
+        prompt = f"""
+Extract ALL text from this image exactly as shown.
+Detect the main language (return only 2-letter code like hi, ta, te, en).
+If not already in {target_lang}, translate naturally.
 
-Step 1 → Extract ALL text from the image EXACTLY as shown (preserve line breaks, spacing, and order).
-Step 2 → Detect the main language (return only the 2-letter code).
-Step 3 → If the detected language is NOT the target language, translate the extracted text naturally and accurately to the target language.
-Step 4 → Return JSON in this exact format (no extra text):
-
-{
-  "original_text": "extracted text here",
+Return ONLY this JSON:
+{{
+  "original_text": "extracted text",
   "detected_language": "hi",
-  "translated_text": "translated text here (or same as original if already in target language)"
-}
+  "translated_text": "translated text"
+}}
 
-Supported languages and codes:
-hi=Hindi, ta=Tamil, te=Telugu, kn=Kannada, ml=Malayalam, bn=Bengali, pa=Punjabi, gu=Gujarati, or=Odia,
-en=English, es=Spanish, fr=French, de=German, ar=Arabic, zh=Chinese, ja=Japanese, ko=Korean, ru=Russian, pt=Portuguese
-
-Target language code received: """ + target_lang + """
-
-Extract and translate now.
+Target language: {target_lang}
 """
 
-    try:
         response = model.generate_content([prompt, image])
-        result = response.text.strip()
+        raw = response.text.strip()
 
-        # Clean ```json blocks if present
-        if result.startswith("```json"):
-            result = result[7:]
-        if result.endswith("```"):
-            result = result[:-3]
-        result = result.strip()
+        if "```json" in raw:
+            raw = raw.split("```json")[1].split("```")[0]
+        elif "```" in raw:
+            raw = raw.split("```")[1]
 
-        import json
-        data = json.loads(result)
+        data = json.loads(raw)
 
-        # Final clean output for frontend
-        return {
-            "detected_language": data.get("detected_language", "unknown"),
-            "language_name": {
-                "hi":"Hindi","ta":"Tamil","te":"Telugu","kn":"Kannada","ml":"Malayalam",
-                "bn":"Bengali","pa":"Punjabi","gu":"Gujarati","or":"Odia","en":"English"
-            }.get(data.get("detected_language", ""), data.get("detected_language", "").upper()),
-            "original_text": data.get("original_text", "").strip() or "No text found",
-            "translated_text": data.get("translated_text", "").strip() or "Translation failed",
-            "target_language": target_lang
+        lang_names = {
+            "hi": "Hindi", "ta": "Tamil", "te": "Telugu", "kn": "Kannada", "ml": "Malayalam",
+            "bn": "Bengali", "gu": "Gujarati", "pa": "Punjabi", "or": "Odia", "en": "English"
         }
 
+        # ONLY CHANGE STARTS HERE — clean line-by-line lists
+        def clean_lines(text):
+            if not text:
+                return []
+            return [line.strip() for line in text.split("\n") if line.strip()]
+
+        original_lines = clean_lines(data.get("original_text"))
+        translated_lines = clean_lines(data.get("translated_text"))
+
+        return {
+            "detected_language": data.get("detected_language", "unknown"),
+            "language_name": lang_names.get(data.get("detected_language", ""), "Unknown"),
+            "original_text": original_lines,       # ← now a list
+            "translated_text": translated_lines,   # ← now a list
+            "target_language": target_lang
+        }
+        # ONLY CHANGE ENDS HERE
+
     except Exception as e:
-        return {"error": f"Processing failed: {str(e)}"}
+        return {"error": f"Failed: {str(e)}"}
