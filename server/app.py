@@ -81,7 +81,7 @@ async def get_translated_image():
         image = Image.open(io.BytesIO(latest_image)).convert("RGB")
         draw = ImageDraw.Draw(image)
         try:
-            font = ImageFont.truetype("arial.ttf", 80)
+            font = ImageFont.truetype("arial.ttf", 100)
         except:
             font = ImageFont.load_default()
 
@@ -91,13 +91,13 @@ async def get_translated_image():
         translated_text = response.text.strip()
         lines = [line.strip() for line in translated_text.split("\n") if line.strip()][:8]
 
-        y = 40
+        y = 60
         for line in lines:
             bbox = draw.textbbox((0, 0), line, font=font)
             w = bbox[2] - bbox[0]
             draw.rectangle([20, y-20, 60+w, y+100], fill=(0, 0, 0, 180))
             draw.text((40, y), line, font=font, fill="white")
-            y += 130
+            y += 170
 
         buf = io.BytesIO()
         image.save(buf, format="PNG")
